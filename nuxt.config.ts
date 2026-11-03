@@ -12,4 +12,5 @@ export default defineNuxtConfig({
   nitro: {
     storage: { blogs: { driver: 'fs', base: './data/blogs' } },
   },
+  css: ['~/assets/main.css'],
 })
