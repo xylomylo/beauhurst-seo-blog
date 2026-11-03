@@ -9,13 +9,10 @@ export default defineEventHandler(async (event) => {
     'Dataset'
 
   const analysis = analyseCsv(file.data.toString('utf-8'))
+  const slug = slugify(`top-${analysis.rows.length}-uk-${getStage(analysis)}-${industry}-companies`)
 
-  // Put a constant "stage" (e.g. Seed) in the URL; it describes the dataset accurately
-  const stage = Object.entries(analysis.constants).find(([k]) => /stage|round/i.test(k))?.[1] ?? ''
-  const slug = slugify(`top-${analysis.rows.length}-uk-${stage}-${industry}-companies`)
-
-  // S2 replaces this line with AI copy
-  const blog = { slug, industry, createdAt: new Date().toISOString(), title: `Top UK ${industry} companies`, ...analysis }
+  const copy = await generateCopy(industry, analysis)
+  const blog = { slug, industry, createdAt: new Date().toISOString(), ...copy, ...analysis }
 
   await useStorage('blogs').setItem(slug, blog)
   return { slug }

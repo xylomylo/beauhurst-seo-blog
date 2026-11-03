@@ -150,3 +150,7 @@ export function analyseCsv(csv: string): Analysis {
     return { nameCol, metricCol, tableColumns, rows, stats, breakdowns, constants }
 
 }
+
+// e.g. "Seed" when every row has the same Stage
+export const getStage = (a: Analysis) =>
+  Object.entries(a.constants).find(([k]) => /stage|round/i.test(k))?.[1] ?? ''
