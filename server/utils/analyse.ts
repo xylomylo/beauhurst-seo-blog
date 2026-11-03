@@ -119,6 +119,7 @@ export function analyseCsv(csv: string): Analysis {
       { label: `Average ${label}`, value: compact(sum / vals.length, cur) },
       { label: `Median ${label}`, value: compact(median, cur) },
       { label: 'Share held by top 10', value: pct(top10 / sum) },
+      { label: 'Raised by top 10', value: compact(top10, cur) },
       { label: `Leader: ${leader[nameCol]}`, value: `${pct((toNumber(leader[metricCol]) ?? 0) / sum)} of total` },
     )
   }

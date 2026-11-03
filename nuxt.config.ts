@@ -5,7 +5,8 @@ export default defineNuxtConfig({
   app: { head: { htmlAttrs: { lang: 'en-GB' } } },
   runtimeConfig: {
     geminiApiKey: '',
-    geminiModel: 'gemini-2.5-flash',
+    llmModels: 'gemini-3.5-flash,gemini-flash-latest,ollama:llama3.2',
+    ollamaUrl: 'http://localhost:11434',
     public: { siteUrl: 'http://localhost:3000' },
   },
   nitro: {

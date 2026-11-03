@@ -45,6 +45,9 @@ RULES
 - UK English. Plain text only, no markdown. Expert but friendly tone.
 - Avoid AI prose style and em dashes, semicolons or other popular AI indicators.
 - Primary keyword: "${keyword}". Use it in the title, meta description, intro and one heading.
+- Use ONLY the facts below. Never invent numbers, companies, dates or funding rounds.
+- Copy numbers exactly as given. Do NOT calculate new numbers (no sums, differences or percentages).
+- The data is a single snapshot: do not claim growth, trends or change over time.
 
 FACTS
 ${buildFacts(a)}
@@ -74,33 +77,90 @@ export function fallbackCopy(industry: string, a: Analysis): BlogCopy {
   }
 }
 
+const RETRYABLE = [429, 500, 503]
+
+// Shared by every provider: parse the JSON and check the fields we need
+function parseCopy(text: string | undefined): Partial<BlogCopy> {
+  const copy = JSON.parse(text ?? '') as Partial<BlogCopy>
+  if (!copy.title || !copy.intro || !copy.sections?.length) throw new Error('LLM response missing fields')
+  return copy
+}
+
+async function callGemini(model: string, apiKey: string, prompt: string) {
+  const res = await $fetch<any>(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey },
+      body: {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.6 },
+      },
+      timeout: 30000,
+    },
+  )
+  return parseCopy(res?.candidates?.[0]?.content?.parts?.[0]?.text)
+}
+
+async function callOllama(model: string, baseUrl: string, prompt: string) {
+  const res = await $fetch<any>(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    body: { model, prompt, stream: false, format: 'json', options: { temperature: 0.6 } },
+    timeout: 180000, // local models are slower
+  })
+  return parseCopy(res?.response)
+}
+
+// Pull every number out of a piece of text ("£30.3m", "33%", "78", "2026")
+function extractNumbers(text: string): number[] {
+  return [...text.matchAll(/£?\d[\d,]*(?:\.\d+)?(?:bn|m|k)?/gi)]
+    .map(m => toNumber(m[0]))
+    .filter((n): n is number => n !== null)
+}
+
+// Numbers in the copy that don't match (±1%) any number we supplied in the prompt
+function findUngroundedNumbers(copy: Partial<BlogCopy>, prompt: string): number[] {
+  const allowed = extractNumbers(prompt)
+  return extractNumbers(JSON.stringify(copy)).filter(
+    n => n > 10 && !allowed.some(a => Math.abs(a - n) <= Math.abs(a) * 0.01),
+  )
+}
+
 export async function generateCopy(industry: string, a: Analysis): Promise<BlogCopy> {
   const fallback = fallbackCopy(industry, a)
-  const { geminiApiKey, geminiModel } = useRuntimeConfig()
-    if (!geminiApiKey) {
-    console.warn('[generateCopy] No NUXT_GEMINI_API_KEY found; using template copy')
-    return fallback
+  const { geminiApiKey, llmModels, ollamaUrl } = useRuntimeConfig()
+  const prompt = buildPrompt(industry, a)
+  const models = String(llmModels).split(',').map(m => m.trim()).filter(Boolean)
+
+  for (const model of models) {
+    const isOllama = model.startsWith('ollama:')
+    if (!isOllama && !geminiApiKey) {
+      console.warn(`[generateCopy] Skipping ${model}: no NUXT_GEMINI_API_KEY`)
+      continue
+    }
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const copy = isOllama
+          ? await callOllama(model.slice('ollama:'.length), ollamaUrl, prompt)
+          : await callGemini(model, geminiApiKey, prompt)
+                const ungrounded = findUngroundedNumbers(copy, prompt)
+        if (ungrounded.length) {
+          const e: any = new Error(`Ungrounded numbers: ${ungrounded.join(', ')}`)
+          e.retryable = true
+          throw e
+        }
+        console.info(`[generateCopy] Success with ${model}`)
+        return { ...fallback, ...copy }
+      } catch (err: any) {
+        const status = err?.statusCode ?? err?.status
+        console.warn(`[generateCopy] ${model} attempt ${attempt} failed:`, status, err?.data?.error?.message ?? err?.message)
+        if (!RETRYABLE.includes(status) && !err.retryable) break
+        await new Promise(resolve => setTimeout(resolve, 1500 * attempt))
+      }
+    }
   }
 
-  try {
-    const res = await $fetch<any>(
-      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'x-goog-api-key': geminiApiKey },
-        body: {
-          contents: [{ parts: [{ text: buildPrompt(industry, a) }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.6 },
-        },
-        timeout: 30000,
-      },
-    )
-    const text = res?.candidates?.[0]?.content?.parts?.[0]?.text
-    const copy = JSON.parse(text) as Partial<BlogCopy>
-    if (!copy.title || !copy.intro || !copy.sections?.length) throw new Error('LLM response missing fields')
-    return { ...fallback, ...copy }
-  } catch (err) {
-    console.error('[generateCopy] Falling back to template copy:', err)
-    return fallback
-  }
+  console.error('[generateCopy] All models failed; using template copy')
+  return fallback
 }
