@@ -20,7 +20,7 @@ function buildFacts(a: Analysis) {
   const top = a.rows.slice(0, 10).map(r =>
     [`${r.Rank}. ${r[a.nameCol]}`, a.metricCol && r[a.metricCol], descCol && r[descCol]]
       .filter(Boolean)
-      .join(' – '),
+      .join(' - '),
   )
   return [
     'Dataset context:',
@@ -82,7 +82,7 @@ const RETRYABLE = [429, 500, 503]
 // Shared by every provider: parse the JSON and check the fields we need
 function parseCopy(text: string | undefined): Partial<BlogCopy> {
   const copy = JSON.parse(text ?? '') as Partial<BlogCopy>
-  if (!copy.title || !copy.intro || !copy.sections?.length) throw new Error('LLM response missing fields')
+  if (!copy.title || !copy.intro || (copy.sections?.length ?? 0) < 2) throw new Error('LLM response missing fields')
   return copy
 }
 
@@ -144,12 +144,17 @@ export async function generateCopy(industry: string, a: Analysis): Promise<BlogC
         const copy = isOllama
           ? await callOllama(model.slice('ollama:'.length), ollamaUrl, prompt)
           : await callGemini(model, geminiApiKey, prompt)
-                const ungrounded = findUngroundedNumbers(copy, prompt)
+        const ungrounded = findUngroundedNumbers(copy, prompt)
         if (ungrounded.length) {
           const e: any = new Error(`Ungrounded numbers: ${ungrounded.join(', ')}`)
           e.retryable = true
           throw e
         }
+        if (!copy.title || copy.title.length > 60) copy.title = fallback.title
+        if (!copy.metaDescription || copy.metaDescription.length < 120 || copy.metaDescription.length > 160) {
+          copy.metaDescription = fallback.metaDescription
+        }
+        if (copy.intro) copy.intro = copy.intro.split(/\n\s*\n/).slice(0, 2).join('\n\n')
         console.info(`[generateCopy] Success with ${model}`)
         return { ...fallback, ...copy }
       } catch (err: any) {
